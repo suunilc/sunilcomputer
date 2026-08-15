@@ -3,6 +3,11 @@ import { AppState, BusinessInfo, Customer, Expense, Product, Purchase, Sale, Sup
 import { loadAppState, saveAppState } from './utils/storage';
 import { syncAllCustomerStats } from './utils/dues';
 import { generateInvoiceNo } from './utils/formatters';
+import {
+  fetchFullStateFromSupabase,
+  subscribeToSupabaseStateChanges,
+  syncStateToSupabase,
+} from './services/supabaseService';
 import { Header } from './components/Navigation/Header';
 import { Sidebar } from './components/Navigation/Sidebar';
 import { Dashboard } from './components/Dashboard/Dashboard';
@@ -89,9 +94,86 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isInvoiceModalOpen, isMobileNavOpen]);
 
-  // Save on state change
+  // Initial Sync from Supabase on App Mount
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initSupabaseSync() {
+      try {
+        const remoteState = await fetchFullStateFromSupabase();
+        if (!isMounted) return;
+
+        if (
+          remoteState &&
+          ((remoteState.products && remoteState.products.length > 0) ||
+            (remoteState.sales && remoteState.sales.length > 0) ||
+            (remoteState.customers && remoteState.customers.length > 0) ||
+            remoteState.businessInfo)
+        ) {
+          setState((prevState) => {
+            const merged: AppState = {
+              ...prevState,
+              products:
+                remoteState.products && remoteState.products.length > 0
+                  ? remoteState.products
+                  : prevState.products,
+              customers:
+                remoteState.customers && remoteState.customers.length > 0
+                  ? remoteState.customers
+                  : prevState.customers,
+              sales: remoteState.sales || prevState.sales,
+              expenses: remoteState.expenses || prevState.expenses,
+              suppliers: remoteState.suppliers || prevState.suppliers,
+              purchases: remoteState.purchases || prevState.purchases,
+              businessInfo: {
+                ...prevState.businessInfo,
+                ...(remoteState.businessInfo || {}),
+              },
+            };
+            saveAppState(merged);
+            return merged;
+          });
+        } else {
+          // If no remote state is present in Supabase yet, push local state to initialize it
+          syncStateToSupabase(state);
+        }
+      } catch (err) {
+        console.warn('Initial Supabase sync notice:', err);
+      }
+    }
+
+    initSupabaseSync();
+
+    const unsubscribe = subscribeToSupabaseStateChanges((remoteState) => {
+      if (remoteState && isMounted) {
+        setState((prev) => {
+          const merged: AppState = {
+            ...prev,
+            ...remoteState,
+            businessInfo: {
+              ...prev.businessInfo,
+              ...(remoteState.businessInfo || {}),
+            },
+          };
+          saveAppState(merged);
+          return merged;
+        });
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  // Save on state change locally and auto-push to Supabase cloud
   useEffect(() => {
     saveAppState(state);
+    const timer = setTimeout(() => {
+      syncStateToSupabase(state);
+    }, 1000);
+    return () => clearTimeout(timer);
   }, [state]);
 
   // Handler for opening invoice modal
