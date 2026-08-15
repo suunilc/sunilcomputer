@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+    <title>Sunshine Computer ERP</title>
+    
+    <!-- Instant Theme Bootstrap to prevent any flash or color hiding on startup for any Windows OS -->
+    <script>
+      (function() {
+        try {
+          var STORAGE_KEY = 'sunshine_full_theme_config_v2';
+          var raw = localStorage.getItem(STORAGE_KEY);
+          var appBg = '#ffffff';
+          var menuBg = '#ffffff';
+          var textBg = '#ffffff';
+          var textColor = '#000000';
+          var menuWidth = '256px';
+
+          if (raw) {
+            var cfg = JSON.parse(raw);
+            if (cfg.appBgHex) appBg = cfg.appBgHex;
+            if (cfg.menuBgHex) menuBg = cfg.menuBgHex;
+            if (cfg.textBgHex) textBg = cfg.textBgHex;
+            if (cfg.textColorHex) textColor = cfg.textColorHex;
+            if (cfg.menuWidth) menuWidth = cfg.menuWidth + 'px';
+          } else {
+            var legacyHex = localStorage.getItem('sunshine_custom_bg_hex_v1');
+            if (legacyHex) appBg = legacyHex;
+          }
+
+          var docEl = document.documentElement;
+          docEl.style.setProperty('--app-bg', appBg);
+          docEl.style.setProperty('--menu-bg', menuBg);
+          docEl.style.setProperty('--text-bg', textBg);
+          docEl.style.setProperty('--app-text-color', textColor);
+          docEl.style.setProperty('--menu-width', menuWidth);
+          docEl.style.backgroundColor = appBg;
+          docEl.style.color = textColor;
+        } catch (e) {
+          // Graceful fallback
+        }
+      })();
+    </script>
+  </head>
+  <body style="margin: 0; padding: 0; background-color: var(--app-bg, #ffffff); color: var(--app-text-color, #000000); min-height: 100vh;">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

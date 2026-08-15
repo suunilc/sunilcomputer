@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --app-bg: #ffffff;
+    --menu-bg: #ffffff;
+    --text-bg: #ffffff;
+    --app-text-color: #000000;
+    --menu-text-color: #000000;
+    --menu-width: 256px;
+  }
+
+  html {
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--app-text-color, #000000);
+    background-color: var(--app-bg, #ffffff);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    color: var(--app-text-color, #000000);
+    background-color: var(--app-bg, #ffffff);
+    min-height: 100vh;
+    overflow-x: hidden;
+    transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+  }
+
+  /* Automatically inherit customizable text color across typography */
+  h1, h2, h3, h4, h5, h6, p, span, div, label, td, th, li, a, strong, b {
+    color: inherit;
+  }
+
+  /* Touch-friendly inputs and buttons */
+  input, select, textarea, button {
+    font-family: inherit;
+  }
+}
+
+/* Dynamically apply customizable text card / box background color (except printable bill) */
+:not(#printable-bill, #printable-bill *).bg-white {
+  background-color: var(--text-bg, #ffffff) !important;
+}
+
+/* Ensure inputs and surfaces stay legible when dark text background is selected */
+.dark-text-bg :not(#printable-bill, #printable-bill *).bg-white {
+  border-color: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* Custom utility for responsive tables and touch surfaces */
+.table-responsive-container {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Dynamic System Menu background and text container styles */
+.system-menu-container {
+  background-color: var(--menu-bg, #ffffff);
+  color: var(--menu-text-color, #000000);
+  transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+}
+
+@layer utilities {
+  /* Print Styles for Invoices (Standard A4 and A5 fit) */
+  @media print {
+    body * {
+      visibility: hidden !important;
+    }
+    #printable-bill, #printable-bill * {
+      visibility: visible !important;
+      color: #000000 !important;
+    }
+    #printable-bill {
+      position: absolute !important;
+      left: 0 !important;
+      top: 0 !important;
+      width: 100% !important;
+      max-width: 190mm !important;
+      min-height: auto !important;
+      box-shadow: none !important;
+      border: 1px solid #000000 !important;
+      margin: 0 auto !important;
+      padding: 8mm 10mm !important;
+      background: #ffffff !important;
+      color: #000000 !important;
+      page-break-after: avoid;
+      page-break-inside: avoid;
+    }
+    @page {
+      size: A4 portrait;
+      margin: 10mm;
+    }
+    .print\:hidden {
+      display: none !important;
+    }
+  }
+}

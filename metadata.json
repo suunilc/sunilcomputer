@@ -1,0 +1,8 @@
+{
+  "name": "sunil1",
+  "description": "Complete ERP Software for Sunshine Computer Institute And Service Center - Photo And Framing House",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
