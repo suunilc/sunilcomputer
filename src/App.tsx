@@ -108,7 +108,8 @@ export default function App() {
           ((remoteState.products && remoteState.products.length > 0) ||
             (remoteState.sales && remoteState.sales.length > 0) ||
             (remoteState.customers && remoteState.customers.length > 0) ||
-            remoteState.businessInfo)
+            remoteState.businessInfo ||
+            (remoteState.users && remoteState.users.length > 0))
         ) {
           setState((prevState) => {
             const merged: AppState = {
@@ -125,6 +126,11 @@ export default function App() {
               expenses: remoteState.expenses || prevState.expenses,
               suppliers: remoteState.suppliers || prevState.suppliers,
               purchases: remoteState.purchases || prevState.purchases,
+              users:
+                remoteState.users && remoteState.users.length > 0
+                  ? remoteState.users
+                  : prevState.users,
+              currentUser: remoteState.currentUser || prevState.currentUser,
               businessInfo: {
                 ...prevState.businessInfo,
                 ...(remoteState.businessInfo || {}),
@@ -480,13 +486,18 @@ export default function App() {
 
   const handleUpdateUserCredentials = (userId: string, newUsername: string, newPassword?: string) => {
     setState((prev) => {
+      const currentUserName = (prev.currentUser?.username || 'Sunil').toLowerCase();
       const updatedUsers = (prev.users || []).map((u) => {
-        if (u.id === userId || u.username === (prev.currentUser?.username || 'Sunil')) {
+        if (
+          u.id === userId ||
+          u.username.toLowerCase() === currentUserName ||
+          u.role === 'admin'
+        ) {
           return {
             ...u,
-            username: newUsername,
-            name: newUsername,
-            ...(newPassword ? { password: newPassword } : {}),
+            username: newUsername.trim(),
+            name: newUsername.trim(),
+            ...(newPassword !== undefined && newPassword !== '' ? { password: newPassword.trim() } : {}),
           };
         }
         return u;
@@ -496,17 +507,21 @@ export default function App() {
       if (updatedCurrent) {
         updatedCurrent = {
           ...updatedCurrent,
-          username: newUsername,
-          name: newUsername,
-          ...(newPassword ? { password: newPassword } : {}),
+          username: newUsername.trim(),
+          name: newUsername.trim(),
+          ...(newPassword !== undefined && newPassword !== '' ? { password: newPassword.trim() } : {}),
         };
       }
 
-      return {
+      const nextState: AppState = {
         ...prev,
         users: updatedUsers,
         currentUser: updatedCurrent,
       };
+
+      saveAppState(nextState);
+      syncStateToSupabase(nextState, true);
+      return nextState;
     });
   };
 
@@ -515,6 +530,20 @@ export default function App() {
       <LoginModal
         users={state.users}
         businessInfo={state.businessInfo}
+        onStateSynced={(remoteState) => {
+          setState((prev) => {
+            const merged: AppState = {
+              ...prev,
+              ...remoteState,
+              businessInfo: {
+                ...prev.businessInfo,
+                ...(remoteState.businessInfo || {}),
+              },
+            };
+            saveAppState(merged);
+            return merged;
+          });
+        }}
         onLogin={(user) => {
           setState((prev) => ({ ...prev, currentUser: user }));
           setIsLoggedIn(true);

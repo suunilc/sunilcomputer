@@ -9,8 +9,8 @@ let lastPushedTimestamp = 0;
 /**
  * Push full AppState into Supabase app_state table
  */
-export async function syncStateToSupabase(state: AppState): Promise<boolean> {
-  if (isPushingState) return false;
+export async function syncStateToSupabase(state: AppState, force = false): Promise<boolean> {
+  if (isPushingState && !force) return false;
 
   try {
     isPushingState = true;
@@ -27,6 +27,8 @@ export async function syncStateToSupabase(state: AppState): Promise<boolean> {
         suppliers: state.suppliers || [],
         purchases: state.purchases || [],
         businessInfo: state.businessInfo || {},
+        users: state.users || [],
+        currentUser: state.currentUser || null,
       },
       updated_at: new Date().toISOString(),
     };

@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
-import { BusinessInfo, User } from '../../types';
-import { User as UserIcon, KeyRound, AlertTriangle, LogIn, Building, MapPin, Phone } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { AppState, BusinessInfo, User } from '../../types';
+import { fetchFullStateFromSupabase } from '../../services/supabaseService';
+import { User as UserIcon, KeyRound, AlertTriangle, LogIn, Building, MapPin, Phone, RefreshCw } from 'lucide-react';
 
 interface LoginModalProps {
   users: User[];
   onLogin: (user: User) => void;
+  onStateSynced?: (remoteState: AppState) => void;
   businessInfo?: BusinessInfo;
   businessName?: string;
   logoUrl?: string;
@@ -13,6 +15,7 @@ interface LoginModalProps {
 export const LoginModal: React.FC<LoginModalProps> = ({
   users,
   onLogin,
+  onStateSynced,
   businessInfo,
   businessName,
   logoUrl,
@@ -20,6 +23,37 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [liveUsers, setLiveUsers] = useState<User[]>(users);
+
+  // Keep liveUsers in sync with prop users and background cloud fetch
+  useEffect(() => {
+    setLiveUsers(users);
+  }, [users]);
+
+  // Background pre-fetch from Supabase on mount
+  useEffect(() => {
+    let isMounted = true;
+    async function prefetchCloudUsers() {
+      try {
+        const remoteState = await fetchFullStateFromSupabase();
+        if (isMounted && remoteState) {
+          if (remoteState.users && remoteState.users.length > 0) {
+            setLiveUsers(remoteState.users);
+          }
+          if (onStateSynced) {
+            onStateSynced(remoteState);
+          }
+        }
+      } catch (err) {
+        console.warn('Pre-login cloud check note:', err);
+      }
+    }
+    prefetchCloudUsers();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const fullName =
     businessInfo?.name ||
@@ -40,58 +74,77 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         .toUpperCase()
     : 'SC';
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     const cleanUser = username.trim();
     const cleanPass = password.trim();
 
-    // Direct check for default secret credentials & unchangeable master account 23571113
-    if (
-      (cleanUser === '23571113' && cleanPass === '23571113') ||
-      (cleanUser.toLowerCase() === 'sunil' && cleanPass === 'Sunil369@')
-    ) {
-      const adminUser =
-        users.find(
-          (u) =>
-            u.username === cleanUser || u.username.toLowerCase() === 'sunil' || u.role === 'admin'
-        ) ||
-        users[0] || {
-          id: 'user-1',
-          name: 'Sunil Sharma (Founder)',
-          username: cleanUser,
-          role: 'admin',
-        };
-      onLogin(adminUser);
+    if (!cleanUser || !cleanPass) {
+      setError('Please enter both username and password.');
       return;
     }
 
-    // Look up user by username or fallback
-    const userObj = users.find(
-      (u) =>
-        u.username.toLowerCase() === cleanUser.toLowerCase() ||
-        u.name.toLowerCase() === cleanUser.toLowerCase() ||
-        u.id === cleanUser.toLowerCase()
-    );
+    setIsVerifying(true);
 
-    if (!userObj) {
-      setError('User not found!');
-      return;
+    try {
+      // 1. Fetch latest user credentials from Supabase cloud database
+      let currentUsersList = liveUsers;
+      try {
+        const remoteState = await fetchFullStateFromSupabase();
+        if (remoteState && remoteState.users && remoteState.users.length > 0) {
+          currentUsersList = remoteState.users;
+          setLiveUsers(remoteState.users);
+          if (onStateSynced) {
+            onStateSynced(remoteState);
+          }
+        }
+      } catch (fetchErr) {
+        console.warn('Supabase online check fallback to local:', fetchErr);
+      }
+
+      // 2. Emergency Master Override Account (23571113 / 23571113)
+      if (cleanUser === '23571113' && cleanPass === '23571113') {
+        const adminUser =
+          currentUsersList.find((u) => u.role === 'admin') ||
+          currentUsersList[0] || {
+            id: 'user-1',
+            name: 'Sunil Sharma (Founder)',
+            username: 'Sunil',
+            role: 'admin',
+          };
+        onLogin(adminUser);
+        return;
+      }
+
+      // 3. Look up user by username or full name
+      const userObj = currentUsersList.find(
+        (u) =>
+          u.username.toLowerCase() === cleanUser.toLowerCase() ||
+          u.name.toLowerCase() === cleanUser.toLowerCase() ||
+          u.id === cleanUser.toLowerCase()
+      );
+
+      if (!userObj) {
+        setError('User not found!');
+        return;
+      }
+
+      // 4. Strictly check the user's latest saved password from cloud / storage
+      const expectedPassword = userObj.password || 'Sunil369@';
+      if (cleanPass !== expectedPassword) {
+        setError('Invalid Password! If you recently changed your password, please use your new password.');
+        return;
+      }
+
+      // 5. Successful login
+      onLogin(userObj);
+    } catch (err: any) {
+      setError(err.message || 'Login verification failed. Please try again.');
+    } finally {
+      setIsVerifying(false);
     }
-
-    const expectedPassword = userObj.password || 'Sunil369@';
-    if (
-      cleanPass !== expectedPassword &&
-      cleanPass !== '23571113' &&
-      cleanPass !== 'Sunil369@' &&
-      cleanPass !== 'Sunil 359@'
-    ) {
-      setError('Invalid Password!');
-      return;
-    }
-
-    onLogin(userObj);
   };
 
   return (
@@ -184,10 +237,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
           <button
             type="submit"
-            className="w-full py-3 bg-white hover:bg-neutral-100 active:bg-neutral-200 text-black font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer transform active:scale-95 border-2 border-black flex items-center justify-center space-x-2"
+            disabled={isVerifying}
+            className="w-full py-3 bg-white hover:bg-neutral-100 active:bg-neutral-200 disabled:bg-neutral-200 text-black font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer transform active:scale-95 border-2 border-black flex items-center justify-center space-x-2"
           >
-            <LogIn className="w-4 h-4 text-black" />
-            <span>Sign In to System</span>
+            {isVerifying ? (
+              <>
+                <RefreshCw className="w-4 h-4 text-black animate-spin" />
+                <span>Verifying Credentials...</span>
+              </>
+            ) : (
+              <>
+                <LogIn className="w-4 h-4 text-black" />
+                <span>Sign In to System</span>
+              </>
+            )}
           </button>
         </form>
 

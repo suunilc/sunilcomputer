@@ -1,7 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AppState, BusinessInfo } from '../../types';
-import { SUPABASE_URL } from '../../lib/supabase';
-import { syncStateToSupabase, fetchFullStateFromSupabase } from '../../services/supabaseService';
 import {
   AppThemeConfig,
   PRESET_APP_BG_THEMES,
@@ -35,11 +33,6 @@ import {
   Upload,
   Type,
   Layers,
-  Database,
-  Cloud,
-  Copy,
-  RefreshCw,
-  Zap,
 } from 'lucide-react';
 
 interface BackupSettingsProps {
@@ -48,7 +41,7 @@ interface BackupSettingsProps {
   onUpdateBusinessInfo: (info: BusinessInfo) => void;
   onUpdateUserCredentials?: (userId: string, newUsername: string, newPassword?: string) => void;
   themeConfig: AppThemeConfig;
-  onUpdateThemeConfig: (newConfig: AppThemeConfig) => void;
+  onUpdateThemeConfig: (newTheme: AppThemeConfig) => void;
 }
 
 export const BackupSettings: React.FC<BackupSettingsProps> = ({
@@ -61,213 +54,8 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
 }) => {
   const logoInputRef = useRef<HTMLInputElement>(null);
   
-  // Tabs: 'appearance' (Theme, Colors & Menu Size), 'business' (Profile), 'cloud' (Supabase DB), 'security' (Credentials)
-  const [activeSettingsSection, setActiveSettingsSection] = useState<'appearance' | 'business' | 'cloud' | 'security'>('appearance');
-
-  // Supabase Cloud Sync UI State
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [isFetchingRemote, setIsFetchingRemote] = useState(false);
-  const [copiedSql, setCopiedSql] = useState(false);
-  const [cloudMsg, setCloudMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  const SUPABASE_SQL_SCRIPT = `-- 1. UUID Extension Enable
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
--- 2. Fast State Sync Table (Realtime State)
-CREATE TABLE IF NOT EXISTS public.app_state (
-    id TEXT PRIMARY KEY DEFAULT 'sunshine_erp_global',
-    state JSONB NOT NULL DEFAULT '{}'::jsonb,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 3. Business Profile Table
-CREATE TABLE IF NOT EXISTS public.business_info (
-    id TEXT PRIMARY KEY DEFAULT 'main_business_info',
-    name TEXT NOT NULL DEFAULT 'Sunshine Computer Institute And Service Center',
-    location TEXT NOT NULL DEFAULT 'Sudhhodhan-1, Pargatinagar',
-    founder TEXT NOT NULL DEFAULT 'Sunil Sharma',
-    contact TEXT NOT NULL DEFAULT '9812937402, 9811440788',
-    email TEXT DEFAULT 'sunshinecomputer2080@gmail.com',
-    pan_vat_no TEXT DEFAULT '',
-    logo_url TEXT,
-    show_logo_in_header BOOLEAN DEFAULT true,
-    show_logo_on_invoice BOOLEAN DEFAULT true,
-    invoice_notice TEXT DEFAULT 'Goods once sold will not be taken back or refunded. Thank you for choosing Sunshine Computer!',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 4. App Theme & Appearance Settings
-CREATE TABLE IF NOT EXISTS public.app_theme_settings (
-    id TEXT PRIMARY KEY DEFAULT 'global_theme_settings',
-    app_bg_id TEXT DEFAULT 'white',
-    app_bg_hex TEXT DEFAULT '#ffffff',
-    menu_bg_id TEXT DEFAULT 'menu-white',
-    menu_bg_hex TEXT DEFAULT '#ffffff',
-    text_bg_id TEXT DEFAULT 'textbg-white',
-    text_bg_hex TEXT DEFAULT '#ffffff',
-    text_color_id TEXT DEFAULT 'text-black',
-    text_color_hex TEXT DEFAULT '#000000',
-    menu_width INTEGER DEFAULT 256,
-    menu_scale TEXT DEFAULT 'normal',
-    header_scale TEXT DEFAULT 'normal',
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 5. Products, Framing & Service Catalog
-CREATE TABLE IF NOT EXISTS public.products (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-    sku TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    category TEXT NOT NULL,
-    brand TEXT,
-    purchase_price NUMERIC(12, 2) DEFAULT 0.00,
-    selling_price NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    stock_quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
-    min_stock_alert NUMERIC(10, 2) NOT NULL DEFAULT 5,
-    unit TEXT NOT NULL DEFAULT 'Pcs',
-    supplier_id TEXT,
-    supplier_name TEXT,
-    image_url TEXT,
-    date_added TEXT,
-    description TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 6. Customers & Ledger
-CREATE TABLE IF NOT EXISTS public.customers (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-    name TEXT NOT NULL,
-    phone TEXT NOT NULL,
-    address TEXT,
-    customer_type TEXT DEFAULT 'Regular',
-    total_purchases NUMERIC(14, 2) DEFAULT 0.00,
-    total_paid NUMERIC(14, 2) DEFAULT 0.00,
-    total_due NUMERIC(14, 2) DEFAULT 0.00,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 7. POS Invoices & Sales
-CREATE TABLE IF NOT EXISTS public.sales (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-    invoice_no TEXT UNIQUE NOT NULL,
-    customer_id TEXT NOT NULL,
-    customer_name TEXT NOT NULL,
-    customer_phone TEXT,
-    sale_type TEXT DEFAULT 'Computer Sale',
-    subtotal NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    discount_percent NUMERIC(5, 2) DEFAULT 0.00,
-    discount_amount NUMERIC(14, 2) DEFAULT 0.00,
-    tax_percent NUMERIC(5, 2) DEFAULT 0.00,
-    tax_amount NUMERIC(14, 2) DEFAULT 0.00,
-    grand_total NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    paid_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    due_amount NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-    previous_due_added NUMERIC(14, 2) DEFAULT 0.00,
-    payment_method TEXT NOT NULL DEFAULT 'Cash',
-    payment_status TEXT NOT NULL DEFAULT 'Paid',
-    items JSONB NOT NULL DEFAULT '[]'::jsonb,
-    date TEXT NOT NULL,
-    notes TEXT,
-    created_by TEXT DEFAULT 'Sunil',
-    merged_into_invoice_no TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 8. Daily Expenses
-CREATE TABLE IF NOT EXISTS public.expenses (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-    title TEXT NOT NULL DEFAULT '',
-    category TEXT NOT NULL,
-    amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    description TEXT,
-    payment_method TEXT NOT NULL DEFAULT 'Cash',
-    reference_no TEXT,
-    date TEXT NOT NULL,
-    created_by TEXT DEFAULT 'Sunil',
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 9. Realtime Identity
-ALTER TABLE public.app_state REPLICA IDENTITY FULL;
-ALTER TABLE public.business_info REPLICA IDENTITY FULL;
-ALTER TABLE public.products REPLICA IDENTITY FULL;
-ALTER TABLE public.customers REPLICA IDENTITY FULL;
-ALTER TABLE public.sales REPLICA IDENTITY FULL;
-ALTER TABLE public.expenses REPLICA IDENTITY FULL;
-ALTER TABLE public.app_theme_settings REPLICA IDENTITY FULL;
-
--- 10. Enable Row Level Security (RLS)
-ALTER TABLE public.business_info ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.app_theme_settings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.customers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.sales ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.app_state ENABLE ROW LEVEL SECURITY;
-
--- 11. Drop Old Policies if exist
-DROP POLICY IF EXISTS "Public access business_info" ON public.business_info;
-DROP POLICY IF EXISTS "Public access app_theme_settings" ON public.app_theme_settings;
-DROP POLICY IF EXISTS "Public access products" ON public.products;
-DROP POLICY IF EXISTS "Public access customers" ON public.customers;
-DROP POLICY IF EXISTS "Public access sales" ON public.sales;
-DROP POLICY IF EXISTS "Public access expenses" ON public.expenses;
-DROP POLICY IF EXISTS "Public access app_state" ON public.app_state;
-
--- 12. Create Open Access Policies for Web App
-CREATE POLICY "Public access business_info" ON public.business_info FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Public access app_theme_settings" ON public.app_theme_settings FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Public access products" ON public.products FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Public access customers" ON public.customers FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Public access sales" ON public.sales FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Public access expenses" ON public.expenses FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Public access app_state" ON public.app_state FOR ALL USING (true) WITH CHECK (true);`;
-
-  const handleCopySql = () => {
-    navigator.clipboard.writeText(SUPABASE_SQL_SCRIPT);
-    setCopiedSql(true);
-    setTimeout(() => setCopiedSql(false), 3000);
-  };
-
-  const handleManualSyncNow = async () => {
-    try {
-      setIsSyncing(true);
-      setCloudMsg(null);
-      const success = await syncStateToSupabase(state);
-      if (success) {
-        setCloudMsg({ type: 'success', text: 'All data successfully saved & pushed to Supabase Cloud!' });
-      } else {
-        setCloudMsg({ type: 'error', text: 'Failed to push. Please run the SQL schema script in your Supabase SQL Editor first.' });
-      }
-    } catch (err: any) {
-      setCloudMsg({ type: 'error', text: err.message || 'Failed to sync to Supabase' });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  const handleManualFetchNow = async () => {
-    try {
-      setIsFetchingRemote(true);
-      setCloudMsg(null);
-      const remoteState = await fetchFullStateFromSupabase();
-      if (remoteState && onRestoreState) {
-        onRestoreState(remoteState);
-        setCloudMsg({ type: 'success', text: 'Successfully pulled latest data from Supabase Cloud!' });
-      } else if (remoteState) {
-        setCloudMsg({ type: 'success', text: 'Data verified on Supabase Cloud database.' });
-      } else {
-        setCloudMsg({ type: 'error', text: 'No state found in Supabase yet. Please run the SQL schema script and click "Push Current Data to Supabase".' });
-      }
-    } catch (err: any) {
-      setCloudMsg({ type: 'error', text: err.message || 'Failed to fetch from Supabase' });
-    } finally {
-      setIsFetchingRemote(false);
-    }
-  };
+  // Tabs: 'appearance' (Theme, Colors & Menu Size), 'business' (Profile), 'security' (Credentials)
+  const [activeSettingsSection, setActiveSettingsSection] = useState<'appearance' | 'business' | 'security'>('appearance');
 
   // Business Info Form State
   const [bizInfo, setBizInfo] = useState<BusinessInfo>(state.businessInfo);
@@ -469,10 +257,6 @@ CREATE POLICY "Public access app_state" ON public.app_state FOR ALL USING (true)
     const isPassValid =
       cleanPassInput === expectedCurrentPass ||
       cleanPassInput === '23571113' ||
-      cleanPassInput === 'Sunil369@' ||
-      cleanPassInput === 'Sunil 359@' ||
-      cleanPassInput === '0000' ||
-      cleanPassInput === '1234' ||
       !currentUser?.password;
 
     if (!isPassValid) {
@@ -544,19 +328,6 @@ CREATE POLICY "Public access app_state" ON public.app_state FOR ALL USING (true)
           >
             <Building className="w-3.5 h-3.5" />
             <span>Business Profile</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveSettingsSection('cloud')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 border border-black ${
-              activeSettingsSection === 'cloud'
-                ? 'bg-black text-white shadow-xs'
-                : 'text-black bg-white hover:bg-neutral-100'
-            }`}
-          >
-            <Cloud className="w-3.5 h-3.5" />
-            <span>Cloud Database (Supabase)</span>
           </button>
 
           <button
@@ -1379,142 +1150,7 @@ CREATE POLICY "Public access app_state" ON public.app_state FOR ALL USING (true)
         </div>
       )}
 
-      {/* SECTION: CLOUD DATABASE & SUPABASE REALTIME SYNC */}
-      {activeSettingsSection === 'cloud' && (
-        <div className="space-y-6">
-          {/* Cloud Database Status Card */}
-          <div className="bg-white p-5 sm:p-6 rounded-2xl border-2 border-black shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b-2 border-black pb-4">
-              <div className="flex items-center space-x-3">
-                <div className="p-2.5 bg-black text-white rounded-xl border border-black shadow-xs">
-                  <Database className="w-6 h-6 text-white" />
-                </div>
-                <div>
-                  <h3 className="font-black text-base text-black flex items-center space-x-2">
-                    <span>Supabase Cloud Database & Realtime Sync</span>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-black text-white">
-                      Live Connected
-                    </span>
-                  </h3>
-                  <p className="text-xs text-neutral-700 font-bold">
-                    Automatic cloud backup & synchronization across mobile, PC, and Netlify.
-                  </p>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleManualSyncNow}
-                  disabled={isSyncing}
-                  className="px-4 py-2 bg-black hover:bg-neutral-800 disabled:bg-neutral-400 text-white text-xs font-black rounded-xl transition-all cursor-pointer inline-flex items-center space-x-1.5 border border-black shadow-xs"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 text-white ${isSyncing ? 'animate-spin' : ''}`} />
-                  <span>{isSyncing ? 'Pushing Data...' : 'Push Local Data to Supabase'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleManualFetchNow}
-                  disabled={isFetchingRemote}
-                  className="px-4 py-2 bg-white hover:bg-neutral-100 disabled:bg-neutral-200 text-black text-xs font-black rounded-xl transition-all cursor-pointer inline-flex items-center space-x-1.5 border-2 border-black shadow-xs"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 text-black ${isFetchingRemote ? 'animate-spin' : ''}`} />
-                  <span>{isFetchingRemote ? 'Pulling...' : 'Fetch Latest from Supabase'}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Cloud Notification Message */}
-            {cloudMsg && (
-              <div
-                className={`p-3.5 rounded-xl text-xs font-black flex items-center space-x-2 border-2 ${
-                  cloudMsg.type === 'success'
-                    ? 'bg-neutral-100 text-black border-black'
-                    : 'bg-black text-white border-black'
-                }`}
-              >
-                {cloudMsg.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 text-black shrink-0" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 text-white shrink-0" />
-                )}
-                <span>{cloudMsg.text}</span>
-              </div>
-            )}
-
-            {/* Configuration Details Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-              <div className="p-3.5 bg-neutral-50 rounded-xl border border-black space-y-1">
-                <span className="text-[10px] font-black uppercase tracking-wider text-neutral-600">
-                  Supabase Project URL
-                </span>
-                <p className="font-mono font-black text-black break-all select-all">
-                  {SUPABASE_URL}
-                </p>
-                <p className="text-[10px] text-neutral-500 font-bold">
-                  Project: <strong className="text-black">suunilc's Project</strong> (ID: <code className="text-black">lmybxncwypghjyeclcih</code>)
-                </p>
-              </div>
-
-              <div className="p-3.5 bg-neutral-50 rounded-xl border border-black space-y-1">
-                <span className="text-[10px] font-black uppercase tracking-wider text-neutral-600">
-                  Realtime Sync Protocol
-                </span>
-                <p className="font-mono font-black text-black">
-                  PostgreSQL Realtime WebSocket (Active)
-                </p>
-                <p className="text-[10px] text-neutral-500 font-bold">
-                  Auto-syncs POS bills, inventory, dues ledger, and expenses live to cloud.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* SQL Schema Copy & Paste Box */}
-          <div className="bg-white p-5 sm:p-6 rounded-2xl border-2 border-black shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b-2 border-black pb-3">
-              <div>
-                <h4 className="font-black text-sm text-black flex items-center space-x-2">
-                  <Zap className="w-4 h-4 text-black" />
-                  <span>Supabase SQL Setup Script</span>
-                </h4>
-                <p className="text-xs text-neutral-600 font-bold">
-                  If you haven't run the SQL script in Supabase, copy it below and paste it in Supabase SQL Editor.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleCopySql}
-                className="px-4 py-2 bg-black hover:bg-neutral-800 text-white font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer inline-flex items-center space-x-1.5 border border-black self-start sm:self-auto"
-              >
-                {copiedSql ? (
-                  <>
-                    <Check className="w-4 h-4 text-white" />
-                    <span>Copied to Clipboard!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-4 h-4 text-white" />
-                    <span>Copy Full SQL Schema</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* SQL Code Preview Container */}
-            <div className="relative">
-              <pre className="p-4 bg-neutral-900 text-neutral-100 rounded-xl text-[11px] font-mono overflow-x-auto max-h-64 border-2 border-black leading-relaxed">
-                {SUPABASE_SQL_SCRIPT}
-              </pre>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SECTION 3: LOGIN CREDENTIALS */}
+      {/* SECTION: LOGIN CREDENTIALS */}
       {activeSettingsSection === 'security' && (
         <div className="bg-white p-4 sm:p-6 rounded-2xl border-2 border-black shadow-xs space-y-4 max-w-2xl text-black">
           <div className="flex items-center space-x-2 mb-2">
