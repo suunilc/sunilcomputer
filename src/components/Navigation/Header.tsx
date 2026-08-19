@@ -8,8 +8,10 @@ import {
   Menu,
   X,
   Palette,
+  Radio,
 } from 'lucide-react';
 import { HeaderScale, isColorDark } from '../../utils/theme';
+import { SupabaseConnectionState } from '../../services/supabaseService';
 
 interface HeaderProps {
   state: AppState;
@@ -27,6 +29,7 @@ interface HeaderProps {
   textColorHex?: string;
   headerScale?: HeaderScale;
   onOpenSettings?: () => void;
+  supabaseStatus?: SupabaseConnectionState;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -45,6 +48,7 @@ export const Header: React.FC<HeaderProps> = ({
   textColorHex = '#000000',
   headerScale = 'normal',
   onOpenSettings,
+  supabaseStatus = 'connected',
 }) => {
   const currentUser = state.currentUser;
   const [isSearchOpen, setIsSearchOpen] = React.useState(false);
@@ -225,6 +229,38 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right User & Actions */}
         <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
+          {/* Supabase Realtime Connection Status Badge */}
+          <div
+            onClick={() => {
+              if (onOpenSettings) onOpenSettings();
+              else setActiveTab('settings');
+            }}
+            className="hidden sm:inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-black cursor-pointer shadow-2xs transition-all"
+            style={{
+              backgroundColor: buttonBg,
+              borderColor: borderColor,
+              color: effectiveTextColor,
+            }}
+            title={`Supabase Cloud: ${supabaseStatus.toUpperCase()} (ID: lmybxncwypghjyeclcih)`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                supabaseStatus === 'connected'
+                  ? 'bg-emerald-500 animate-pulse'
+                  : supabaseStatus === 'connecting'
+                  ? 'bg-amber-500 animate-ping'
+                  : 'bg-rose-500'
+              }`}
+            />
+            <span className="hidden md:inline font-bold">
+              {supabaseStatus === 'connected'
+                ? 'Cloud Sync: Live'
+                : supabaseStatus === 'connecting'
+                ? 'Connecting...'
+                : 'Offline'}
+            </span>
+          </div>
+
           {/* Quick Sale Button */}
           <button
             onClick={onOpenPOS}

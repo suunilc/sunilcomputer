@@ -3,11 +3,14 @@ import { AppState, BusinessInfo, Customer, Expense, Product, Purchase, Sale, Sup
 import { loadAppState, saveAppState } from './utils/storage';
 import { syncAllCustomerStats } from './utils/dues';
 import { generateInvoiceNo } from './utils/formatters';
+import { supabase } from './lib/supabase';
 import {
   fetchFullStateFromSupabase,
   subscribeToSupabaseStateChanges,
   syncStateToSupabase,
+  SupabaseConnectionState,
 } from './services/supabaseService';
+import { signOutWithSupabaseAuth } from './services/authService';
 import { Header } from './components/Navigation/Header';
 import { Sidebar } from './components/Navigation/Sidebar';
 import { Dashboard } from './components/Dashboard/Dashboard';
@@ -21,6 +24,7 @@ import { DailyClosingReport } from './components/Reports/DailyClosingReport';
 import { InvoiceModal } from './components/Billing/InvoiceModal';
 import { BackupSettings } from './components/Backup/BackupSettings';
 import { LoginModal } from './components/Auth/LoginModal';
+import { RefreshCw, Database } from 'lucide-react';
 import {
   AppThemeConfig,
   applyThemeToDOM,
@@ -39,6 +43,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [posPreselectedCustomerId, setPosPreselectedCustomerId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isCloudLoading, setIsCloudLoading] = useState(true);
+  const [supabaseStatus, setSupabaseStatus] = useState<SupabaseConnectionState>('connecting');
 
   // Full Theme Configuration State (App BG, Menu BG, Text Color, Menu Size)
   const [themeConfig, setThemeConfig] = useState<AppThemeConfig>(() => loadSavedThemeConfig());
@@ -63,6 +69,51 @@ export default function App() {
 
   // Mobile Navigation Drawer State
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+
+  // Supabase Auth Session Detection & Persistent Auth State Listener
+  useEffect(() => {
+    let isMounted = true;
+
+    // Check existing active persistent session
+    supabase.auth.getSession().then(({ data }) => {
+      if (!isMounted) return;
+      if (data && data.session && data.session.user) {
+        const u = data.session.user;
+        const mappedUser: User = {
+          id: u.id,
+          name: (u.user_metadata as any)?.name || u.email?.split('@')[0] || 'Sunil Sharma (Founder)',
+          username: (u.user_metadata as any)?.username || u.email?.split('@')[0] || 'Sunil',
+          role: ((u.user_metadata as any)?.role as UserRole) || 'admin',
+        };
+        setState((prev) => ({ ...prev, currentUser: mappedUser }));
+        setIsLoggedIn(true);
+      }
+    });
+
+    // Listen to real-time auth state transitions (login, signup, token auto-refresh, signout)
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!isMounted) return;
+      if (session && session.user) {
+        const u = session.user;
+        const mappedUser: User = {
+          id: u.id,
+          name: (u.user_metadata as any)?.name || u.email?.split('@')[0] || 'Sunil Sharma (Founder)',
+          username: (u.user_metadata as any)?.username || u.email?.split('@')[0] || 'Sunil',
+          role: ((u.user_metadata as any)?.role as UserRole) || 'admin',
+        };
+        setState((prev) => ({ ...prev, currentUser: mappedUser }));
+        setIsLoggedIn(true);
+      } else if (event === 'SIGNED_OUT') {
+        setIsLoggedIn(false);
+        setState((prev) => ({ ...prev, currentUser: null }));
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   // Global Keyboard Shortcuts for Windows and all devices
   useEffect(() => {
@@ -94,7 +145,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isInvoiceModalOpen, isMobileNavOpen]);
 
-  // Initial Sync from Supabase on App Mount
+  // Initial Sync directly from Supabase Cloud Tables on App Mount
   useEffect(() => {
     let isMounted = true;
 
@@ -140,32 +191,44 @@ export default function App() {
             return merged;
           });
         } else {
-          // If no remote state is present in Supabase yet, push local state to initialize it
-          syncStateToSupabase(state);
+          // If no remote state is present in Supabase yet, push state to initialize tables
+          syncStateToSupabase(state, true);
         }
       } catch (err) {
         console.warn('Initial Supabase sync notice:', err);
+      } finally {
+        if (isMounted) {
+          setIsCloudLoading(false);
+        }
       }
     }
 
     initSupabaseSync();
 
-    const unsubscribe = subscribeToSupabaseStateChanges((remoteState) => {
-      if (remoteState && isMounted) {
-        setState((prev) => {
-          const merged: AppState = {
-            ...prev,
-            ...remoteState,
-            businessInfo: {
-              ...prev.businessInfo,
-              ...(remoteState.businessInfo || {}),
-            },
-          };
-          saveAppState(merged);
-          return merged;
-        });
+    // Multi-Device Realtime Listener on postgres_changes
+    const unsubscribe = subscribeToSupabaseStateChanges(
+      (remoteState) => {
+        if (remoteState && isMounted) {
+          setState((prev) => {
+            const merged: AppState = {
+              ...prev,
+              ...remoteState,
+              businessInfo: {
+                ...prev.businessInfo,
+                ...(remoteState.businessInfo || {}),
+              },
+            };
+            saveAppState(merged);
+            return merged;
+          });
+        }
+      },
+      (status) => {
+        if (isMounted) {
+          setSupabaseStatus(status);
+        }
       }
-    });
+    );
 
     return () => {
       isMounted = false;
@@ -173,12 +236,12 @@ export default function App() {
     };
   }, []);
 
-  // Save on state change locally and auto-push to Supabase cloud
+  // Save on state change and push directly to Supabase cloud tables
   useEffect(() => {
     saveAppState(state);
     const timer = setTimeout(() => {
-      syncStateToSupabase(state);
-    }, 1000);
+      syncStateToSupabase(state, true);
+    }, 800);
     return () => clearTimeout(timer);
   }, [state]);
 
@@ -190,6 +253,12 @@ export default function App() {
       setTriggerConfetti(false);
       setIsInvoiceModalOpen(true);
     }
+  };
+
+  const handleLogout = async () => {
+    await signOutWithSupabaseAuth();
+    setIsLoggedIn(false);
+    setState((prev) => ({ ...prev, currentUser: null }));
   };
 
   // --- BUSINESS LOGIC HANDLERS ---
@@ -525,6 +594,24 @@ export default function App() {
     });
   };
 
+  if (isCloudLoading) {
+    return (
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4 space-y-4">
+        <div className="w-16 h-16 rounded-3xl border-2 border-black flex items-center justify-center bg-neutral-100 shadow-md">
+          <Database className="w-8 h-8 text-black animate-pulse" />
+        </div>
+        <div className="text-center space-y-1.5">
+          <h2 className="text-base font-black text-black">Connecting to Supabase Cloud Database...</h2>
+          <p className="text-xs text-neutral-600 font-bold">Synchronizing real-time tables across your devices</p>
+        </div>
+        <div className="flex items-center space-x-2 text-xs font-black text-black bg-neutral-100 px-3.5 py-1.5 rounded-full border border-black">
+          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+          <span>Multi-Device Realtime Engine Ready</span>
+        </div>
+      </div>
+    );
+  }
+
   if (!isLoggedIn) {
     return (
       <LoginModal
@@ -572,7 +659,7 @@ export default function App() {
           setActiveTab('pos');
           setIsMobileNavOpen(false);
         }}
-        onLogout={() => setIsLoggedIn(false)}
+        onLogout={handleLogout}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         onViewInvoice={handleViewInvoice}
@@ -583,6 +670,7 @@ export default function App() {
         textColorHex={themeConfig.textColorHex}
         headerScale={themeConfig.headerScale}
         onOpenSettings={() => setActiveTab('settings')}
+        supabaseStatus={supabaseStatus}
       />
 
       {/* Main Body Layout */}
@@ -604,6 +692,7 @@ export default function App() {
           textColorHex={themeConfig.textColorHex}
           menuWidth={themeConfig.menuWidth}
           menuScale={themeConfig.menuScale}
+          supabaseStatus={supabaseStatus}
         />
 
         {/* Content Region */}

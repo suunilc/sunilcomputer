@@ -1,10 +1,13 @@
-import { supabase } from '../lib/supabase';
+import { supabase, SUPABASE_URL } from '../lib/supabase';
 import { AppState, BusinessInfo, Customer, Expense, Product, Purchase, Sale, Supplier, User } from '../types';
 
 export const GLOBAL_STATE_DOC_ID = 'sunshine_erp_global';
+export const SUPABASE_PROJECT_ID = 'lmybxncwypghjyeclcih';
 
 let isPushingState = false;
 let lastPushedTimestamp = 0;
+
+export type SupabaseConnectionState = 'connecting' | 'connected' | 'error' | 'disconnected';
 
 /**
  * Ensure Supabase authentication & persistent session is active
@@ -20,6 +23,78 @@ export async function getSupabaseAuthSession() {
   } catch (err) {
     console.warn('Supabase auth session exception:', err);
     return null;
+  }
+}
+
+/**
+ * Test live connection to Supabase database and measure latency
+ */
+export async function testSupabaseConnection(): Promise<{
+  success: boolean;
+  latencyMs: number;
+  message: string;
+  projectId: string;
+  url: string;
+  tables: Record<string, boolean>;
+}> {
+  const startTime = Date.now();
+  const tableStatus: Record<string, boolean> = {
+    app_state: false,
+    products: false,
+    sales: false,
+    customers: false,
+    expenses: false,
+    business_info: false,
+    users: false,
+  };
+
+  try {
+    // 1. Ping app_state
+    const { data, error } = await supabase
+      .from('app_state')
+      .select('id')
+      .limit(1);
+
+    const latencyMs = Date.now() - startTime;
+
+    if (!error) {
+      tableStatus.app_state = true;
+    }
+
+    // Ping other tables in parallel
+    const [pRes, sRes, cRes, eRes, bRes, uRes] = await Promise.allSettled([
+      supabase.from('products').select('id').limit(1),
+      supabase.from('sales').select('id').limit(1),
+      supabase.from('customers').select('id').limit(1),
+      supabase.from('expenses').select('id').limit(1),
+      supabase.from('business_info').select('id').limit(1),
+      supabase.from('users').select('id').limit(1),
+    ]);
+
+    if (pRes.status === 'fulfilled' && !pRes.value.error) tableStatus.products = true;
+    if (sRes.status === 'fulfilled' && !sRes.value.error) tableStatus.sales = true;
+    if (cRes.status === 'fulfilled' && !cRes.value.error) tableStatus.customers = true;
+    if (eRes.status === 'fulfilled' && !eRes.value.error) tableStatus.expenses = true;
+    if (bRes.status === 'fulfilled' && !bRes.value.error) tableStatus.business_info = true;
+    if (uRes.status === 'fulfilled' && !uRes.value.error) tableStatus.users = true;
+
+    return {
+      success: !error || Object.values(tableStatus).some(Boolean),
+      latencyMs,
+      message: error ? `Connected with note: ${error.message}` : `Connected successfully (${latencyMs}ms)`,
+      projectId: SUPABASE_PROJECT_ID,
+      url: SUPABASE_URL,
+      tables: tableStatus,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      latencyMs: Date.now() - startTime,
+      message: err.message || 'Unable to connect to Supabase database',
+      projectId: SUPABASE_PROJECT_ID,
+      url: SUPABASE_URL,
+      tables: tableStatus,
+    };
   }
 }
 
@@ -174,6 +249,22 @@ export async function syncStateToSupabase(state: AppState, force = false): Promi
       );
     }
 
+    // Table: users
+    if (state.users && state.users.length > 0) {
+      const userRows = state.users.map((u) => ({
+        id: u.id,
+        username: u.username,
+        name: u.name,
+        role: u.role,
+        password: u.password || null,
+        phone: u.phone || null,
+        updated_at: new Date().toISOString(),
+      }));
+      granularSyncTasks.push(
+        Promise.resolve(supabase.from('users').upsert(userRows, { onConflict: 'id' }))
+      );
+    }
+
     // Execute all sync requests concurrently
     const results = await Promise.allSettled(granularSyncTasks);
     const primaryResult = results[0];
@@ -209,19 +300,21 @@ export async function fetchFullStateFromSupabase(): Promise<AppState | null> {
       return data.state as AppState;
     }
 
-    // Fallback: Query granular tables if app_state document is empty
+    // Fallback: Query granular tables directly
     const [
       productsRes,
       salesRes,
       customersRes,
       expensesRes,
-      bizRes
+      bizRes,
+      usersRes
     ] = await Promise.allSettled([
       Promise.resolve(supabase.from('products').select('*')),
       Promise.resolve(supabase.from('sales').select('*')),
       Promise.resolve(supabase.from('customers').select('*')),
       Promise.resolve(supabase.from('expenses').select('*')),
       Promise.resolve(supabase.from('business_info').select('*').limit(1).maybeSingle()),
+      Promise.resolve(supabase.from('users').select('*')),
     ]);
 
     const hasData =
@@ -274,7 +367,7 @@ export async function fetchFullStateFromSupabase(): Promise<AppState | null> {
               date: r.date || r.created_at,
               notes: r.notes,
               createdBy: r.created_by,
-              mergedIntoInvoiceNo: r.merged_into_invoice_no,
+              mergedIntoInvoiceNo: r.mergedIntoInvoiceNo || null,
             }))
           : [];
 
@@ -307,6 +400,18 @@ export async function fetchFullStateFromSupabase(): Promise<AppState | null> {
             }))
           : [];
 
+      const users: User[] =
+        usersRes.status === 'fulfilled' && (usersRes.value as any).data
+          ? (usersRes.value as any).data.map((r: any) => ({
+              id: r.id,
+              username: r.username,
+              name: r.name,
+              role: r.role,
+              password: r.password,
+              phone: r.phone,
+            }))
+          : [];
+
       let businessInfo: Partial<BusinessInfo> = {};
       if (bizRes.status === 'fulfilled' && (bizRes.value as any).data) {
         const b = (bizRes.value as any).data as any;
@@ -333,7 +438,7 @@ export async function fetchFullStateFromSupabase(): Promise<AppState | null> {
         expenses,
         suppliers: [],
         purchases: [],
-        users: [],
+        users,
       };
     }
 
@@ -345,14 +450,17 @@ export async function fetchFullStateFromSupabase(): Promise<AppState | null> {
 }
 
 /**
- * Subscribe to realtime updates from Supabase tables
+ * Subscribe to realtime updates from Supabase tables (instant multi-device sync)
  */
 export function subscribeToSupabaseStateChanges(
-  onRemoteUpdate: (remoteState: AppState) => void
+  onRemoteUpdate: (remoteState: AppState) => void,
+  onStatusChange?: (status: SupabaseConnectionState) => void
 ) {
   try {
+    if (onStatusChange) onStatusChange('connecting');
+
     const channel = supabase
-      .channel('public:app_state')
+      .channel('supabase_realtime_sync')
       .on(
         'postgres_changes',
         {
@@ -373,13 +481,100 @@ export function subscribeToSupabaseStateChanges(
           }
         }
       )
-      .subscribe();
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'products',
+        },
+        async () => {
+          if (Date.now() - lastPushedTimestamp < 1500) return;
+          const fresh = await fetchFullStateFromSupabase();
+          if (fresh) onRemoteUpdate(fresh);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'sales',
+        },
+        async () => {
+          if (Date.now() - lastPushedTimestamp < 1500) return;
+          const fresh = await fetchFullStateFromSupabase();
+          if (fresh) onRemoteUpdate(fresh);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'customers',
+        },
+        async () => {
+          if (Date.now() - lastPushedTimestamp < 1500) return;
+          const fresh = await fetchFullStateFromSupabase();
+          if (fresh) onRemoteUpdate(fresh);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'expenses',
+        },
+        async () => {
+          if (Date.now() - lastPushedTimestamp < 1500) return;
+          const fresh = await fetchFullStateFromSupabase();
+          if (fresh) onRemoteUpdate(fresh);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'business_info',
+        },
+        async () => {
+          if (Date.now() - lastPushedTimestamp < 1500) return;
+          const fresh = await fetchFullStateFromSupabase();
+          if (fresh) onRemoteUpdate(fresh);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'users',
+        },
+        async () => {
+          if (Date.now() - lastPushedTimestamp < 1500) return;
+          const fresh = await fetchFullStateFromSupabase();
+          if (fresh) onRemoteUpdate(fresh);
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          if (onStatusChange) onStatusChange('connected');
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          if (onStatusChange) onStatusChange('error');
+        } else if (status === 'CLOSED') {
+          if (onStatusChange) onStatusChange('disconnected');
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
   } catch (err) {
     console.warn('Realtime subscription error:', err);
+    if (onStatusChange) onStatusChange('error');
     return () => {};
   }
 }

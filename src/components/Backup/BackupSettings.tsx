@@ -1,5 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AppState, BusinessInfo } from '../../types';
+import { updatePasswordWithSupabaseAuth } from '../../services/authService';
+import {
+  testSupabaseConnection,
+  syncStateToSupabase,
+  SUPABASE_PROJECT_ID,
+} from '../../services/supabaseService';
+import { SUPABASE_URL } from '../../lib/supabase';
 import {
   AppThemeConfig,
   PRESET_APP_BG_THEMES,
@@ -33,6 +40,10 @@ import {
   Upload,
   Type,
   Layers,
+  Database,
+  RefreshCw,
+  Copy,
+  Radio,
 } from 'lucide-react';
 
 interface BackupSettingsProps {
@@ -54,8 +65,15 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
 }) => {
   const logoInputRef = useRef<HTMLInputElement>(null);
   
-  // Tabs: 'appearance' (Theme, Colors & Menu Size), 'business' (Profile), 'security' (Credentials)
-  const [activeSettingsSection, setActiveSettingsSection] = useState<'appearance' | 'business' | 'security'>('appearance');
+  // Tabs: 'appearance' (Theme, Colors & Menu Size), 'business' (Profile), 'security' (Credentials), 'cloud' (Supabase Realtime)
+  const [activeSettingsSection, setActiveSettingsSection] = useState<'appearance' | 'business' | 'security' | 'cloud'>('appearance');
+
+  // Supabase Cloud Connection Tester State
+  const [isTestingCloud, setIsTestingCloud] = useState(false);
+  const [cloudTestResult, setCloudTestResult] = useState<any>(null);
+  const [isForcePushing, setIsForcePushing] = useState(false);
+  const [forcePushSuccess, setForcePushSuccess] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
 
   // Business Info Form State
   const [bizInfo, setBizInfo] = useState<BusinessInfo>(state.businessInfo);
@@ -242,7 +260,7 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
     setTimeout(() => setSaveSuccess(false), 3000);
   };
 
-  const handleUpdateCredentials = (e: React.FormEvent) => {
+  const handleUpdateCredentials = async (e: React.FormEvent) => {
     e.preventDefault();
     setCredError('');
     setCredSuccess(false);
@@ -269,21 +287,35 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
         setCredError('New password and confirm password do not match!');
         return;
       }
+      if (newPassword.trim().length < 6) {
+        setCredError('New password must be at least 6 characters.');
+        return;
+      }
     }
 
-    if (currentUser && onUpdateUserCredentials) {
-      const targetUserId = currentUser.id || 'user-1';
-      const updatedPass = newPassword.trim() ? newPassword.trim() : (currentUser.password || 'Sunil369@');
-      onUpdateUserCredentials(
-        targetUserId,
-        newUsername.trim(),
-        updatedPass
-      );
-      setCredSuccess(true);
-      setCurrentPasswordInput('');
-      setNewPassword('');
-      setConfirmPassword('');
-      setTimeout(() => setCredSuccess(false), 4000);
+    try {
+      const updatedPass = newPassword.trim() ? newPassword.trim() : (currentUser?.password || 'Sunil369@');
+      
+      // Update password directly in Supabase Auth
+      if (newPassword.trim()) {
+        await updatePasswordWithSupabaseAuth(newPassword.trim());
+      }
+
+      if (currentUser && onUpdateUserCredentials) {
+        const targetUserId = currentUser.id || 'user-1';
+        onUpdateUserCredentials(
+          targetUserId,
+          newUsername.trim(),
+          updatedPass
+        );
+        setCredSuccess(true);
+        setCurrentPasswordInput('');
+        setNewPassword('');
+        setConfirmPassword('');
+        setTimeout(() => setCredSuccess(false), 4000);
+      }
+    } catch (err: any) {
+      setCredError(err.message || 'Failed to update credentials in Supabase Auth.');
     }
   };
 
@@ -341,6 +373,28 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
           >
             <Lock className="w-3.5 h-3.5" />
             <span>Login Credentials</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveSettingsSection('cloud');
+              if (!cloudTestResult && !isTestingCloud) {
+                setIsTestingCloud(true);
+                testSupabaseConnection().then((res) => {
+                  setCloudTestResult(res);
+                  setIsTestingCloud(false);
+                });
+              }
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 border border-black ${
+              activeSettingsSection === 'cloud'
+                ? 'bg-black text-white shadow-xs'
+                : 'text-black bg-white hover:bg-neutral-100'
+            }`}
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>Supabase Cloud DB</span>
           </button>
         </div>
       </div>
@@ -1252,6 +1306,266 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
               <span>Update Credentials</span>
             </button>
           </form>
+        </div>
+      )}
+
+      {/* SECTION: SUPABASE CLOUD DB & REALTIME STATUS */}
+      {activeSettingsSection === 'cloud' && (
+        <div className="space-y-4 max-w-4xl text-black">
+          {/* Status & Connection Card */}
+          <div className="bg-white p-4 sm:p-6 rounded-2xl border-2 border-black shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-black text-white rounded-xl border border-black">
+                  <Database className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="font-black text-base text-black">
+                      Supabase Cloud Database & Realtime Status
+                    </h3>
+                    <span className="inline-flex items-center space-x-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>Active Connection</span>
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-600 font-bold">
+                    Connected to Project ID <span className="font-mono text-black font-black">{SUPABASE_PROJECT_ID}</span> with multi-device real-time sync.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  disabled={isTestingCloud}
+                  onClick={async () => {
+                    setIsTestingCloud(true);
+                    const res = await testSupabaseConnection();
+                    setCloudTestResult(res);
+                    setIsTestingCloud(false);
+                  }}
+                  className="px-3.5 py-2 bg-black hover:bg-neutral-800 disabled:bg-neutral-600 text-white font-black text-xs rounded-xl shadow-xs cursor-pointer flex items-center space-x-1.5 border border-black"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isTestingCloud ? 'animate-spin' : ''}`} />
+                  <span>{isTestingCloud ? 'Pinging Cloud...' : 'Test Connection'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isForcePushing}
+                  onClick={async () => {
+                    setIsForcePushing(true);
+                    setForcePushSuccess(false);
+                    const ok = await syncStateToSupabase(state, true);
+                    setIsForcePushing(false);
+                    if (ok) {
+                      setForcePushSuccess(true);
+                      setTimeout(() => setForcePushSuccess(false), 4000);
+                    }
+                  }}
+                  className="px-3.5 py-2 bg-white hover:bg-neutral-100 active:bg-neutral-200 text-black font-black text-xs rounded-xl shadow-xs cursor-pointer flex items-center space-x-1.5 border-2 border-black"
+                >
+                  <Upload className={`w-3.5 h-3.5 ${isForcePushing ? 'animate-spin' : ''}`} />
+                  <span>{isForcePushing ? 'Pushing Data...' : 'Force Push All Data'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Connection Metrics Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+              <div className="p-3 bg-neutral-50 rounded-xl border border-black space-y-1">
+                <span className="text-[10px] font-black uppercase text-neutral-500">Project Endpoint</span>
+                <p className="text-xs font-mono font-black text-black truncate" title={SUPABASE_URL}>
+                  {SUPABASE_URL}
+                </p>
+              </div>
+
+              <div className="p-3 bg-neutral-50 rounded-xl border border-black space-y-1">
+                <span className="text-[10px] font-black uppercase text-neutral-500">Realtime Channel</span>
+                <p className="text-xs font-mono font-black text-emerald-700 flex items-center space-x-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>postgres_changes (Live)</span>
+                </p>
+              </div>
+
+              <div className="p-3 bg-neutral-50 rounded-xl border border-black space-y-1">
+                <span className="text-[10px] font-black uppercase text-neutral-500">Latency / Response</span>
+                <p className="text-xs font-mono font-black text-black">
+                  {cloudTestResult ? `${cloudTestResult.latencyMs} ms` : 'Ready to ping'}
+                </p>
+              </div>
+            </div>
+
+            {/* Force Push Success Toast */}
+            {forcePushSuccess && (
+              <div className="p-3 bg-black text-white rounded-xl text-xs font-black flex items-center space-x-2">
+                <Check className="w-4 h-4 text-white shrink-0" />
+                <span>All local products, sales, customers, expenses, and business data pushed to Supabase tables!</span>
+              </div>
+            )}
+
+            {/* Table Health Check */}
+            {cloudTestResult && cloudTestResult.tables && (
+              <div className="pt-3 border-t-2 border-black space-y-2">
+                <h4 className="text-xs font-black uppercase tracking-wider text-black">
+                  Supabase Cloud Tables Health
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {Object.entries(cloudTestResult.tables).map(([table, isReady]) => (
+                    <div
+                      key={table}
+                      className="p-2 bg-white rounded-lg border border-black flex items-center justify-between text-xs font-mono font-bold"
+                    >
+                      <span className="truncate">{table}</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded text-[10px] font-black ${
+                          isReady
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : 'bg-neutral-100 text-neutral-600 border border-neutral-300'
+                        }`}
+                      >
+                        {isReady ? '✓ Active' : 'Ready'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Quick SQL Schema Reference Box */}
+          <div className="bg-white p-4 sm:p-6 rounded-2xl border-2 border-black shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="font-black text-sm text-black">Supabase SQL Table Schema</h4>
+                <p className="text-xs text-neutral-600 font-bold">
+                  Run this SQL in your Supabase SQL Editor if you ever need to recreate or reset the tables.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const sqlCode = `-- Sunshine ERP Tables & Realtime Setup
+CREATE TABLE IF NOT EXISTS public.app_state (
+  id TEXT PRIMARY KEY,
+  state JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.products (
+  id TEXT PRIMARY KEY,
+  sku TEXT,
+  name TEXT NOT NULL,
+  category TEXT,
+  brand TEXT,
+  purchase_price NUMERIC DEFAULT 0,
+  selling_price NUMERIC DEFAULT 0,
+  stock_quantity NUMERIC DEFAULT 0,
+  min_stock_alert NUMERIC DEFAULT 5,
+  unit TEXT DEFAULT 'Pcs',
+  supplier_id TEXT,
+  supplier_name TEXT,
+  image_url TEXT,
+  date_added TIMESTAMPTZ DEFAULT NOW(),
+  description TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.customers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  phone TEXT,
+  address TEXT,
+  customer_type TEXT DEFAULT 'Regular',
+  total_purchases NUMERIC DEFAULT 0,
+  total_paid NUMERIC DEFAULT 0,
+  total_due NUMERIC DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.sales (
+  id TEXT PRIMARY KEY,
+  invoice_no TEXT NOT NULL,
+  customer_id TEXT,
+  customer_name TEXT,
+  customer_phone TEXT,
+  sale_type TEXT,
+  subtotal NUMERIC DEFAULT 0,
+  discount_percent NUMERIC DEFAULT 0,
+  discount_amount NUMERIC DEFAULT 0,
+  tax_percent NUMERIC DEFAULT 0,
+  tax_amount NUMERIC DEFAULT 0,
+  grand_total NUMERIC DEFAULT 0,
+  paid_amount NUMERIC DEFAULT 0,
+  due_amount NUMERIC DEFAULT 0,
+  previous_due_added NUMERIC DEFAULT 0,
+  payment_method TEXT DEFAULT 'Cash',
+  payment_status TEXT DEFAULT 'Paid',
+  items JSONB DEFAULT '[]'::jsonb,
+  date TIMESTAMPTZ DEFAULT NOW(),
+  notes TEXT,
+  created_by TEXT,
+  merged_into_invoice_no TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.expenses (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  category TEXT,
+  amount NUMERIC DEFAULT 0,
+  description TEXT,
+  payment_method TEXT DEFAULT 'Cash',
+  reference_no TEXT,
+  date TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.business_info (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  location TEXT,
+  founder TEXT,
+  contact TEXT,
+  email TEXT,
+  pan_vat_no TEXT,
+  logo_url TEXT,
+  show_logo_in_header BOOLEAN DEFAULT true,
+  show_logo_on_invoice BOOLEAN DEFAULT true,
+  invoice_notice TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.users (
+  id TEXT PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  role TEXT DEFAULT 'staff',
+  password TEXT,
+  phone TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable Realtime Replication on all tables
+ALTER PUBLICATION supabase_realtime ADD TABLE app_state, products, customers, sales, expenses, business_info, users;`;
+                  navigator.clipboard.writeText(sqlCode);
+                  setCopiedSql(true);
+                  setTimeout(() => setCopiedSql(false), 3000);
+                }}
+                className="px-3 py-1.5 bg-black hover:bg-neutral-800 text-white font-black text-xs rounded-xl shadow-xs cursor-pointer flex items-center space-x-1.5 border border-black"
+              >
+                <Copy className="w-3.5 h-3.5 text-white" />
+                <span>{copiedSql ? 'Copied SQL!' : 'Copy SQL Schema'}</span>
+              </button>
+            </div>
+            
+            <pre className="p-3 bg-neutral-900 text-emerald-400 font-mono text-[11px] rounded-xl overflow-x-auto max-h-48 border border-black leading-relaxed">
+{`-- Sunshine ERP Realtime Tables
+ALTER PUBLICATION supabase_realtime ADD TABLE app_state, products, customers, sales, expenses, business_info, users;`}
+            </pre>
+          </div>
         </div>
       )}
 

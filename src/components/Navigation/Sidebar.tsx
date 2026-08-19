@@ -11,8 +11,10 @@ import {
   Settings,
   X,
   Database,
+  Radio,
 } from 'lucide-react';
 import { MenuDensityScale, isColorDark } from '../../utils/theme';
+import { SupabaseConnectionState, SUPABASE_PROJECT_ID } from '../../services/supabaseService';
 
 interface SidebarProps {
   activeTab: string;
@@ -23,6 +25,7 @@ interface SidebarProps {
   textColorHex?: string;
   menuWidth?: number;
   menuScale?: MenuDensityScale;
+  supabaseStatus?: SupabaseConnectionState;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -34,6 +37,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   textColorHex = '#000000',
   menuWidth = 256,
   menuScale = 'normal',
+  supabaseStatus = 'connected',
 }) => {
   const isMenuDark = isColorDark(menuBgHex);
   const effectiveTextColor = isMenuDark ? '#ffffff' : textColorHex;
@@ -241,14 +245,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <p className="font-black text-xs" style={{ color: effectiveTextColor }}>
             Sunshine Computer
           </p>
-          <span className="inline-flex items-center space-x-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Live DB</span>
+          <span
+            className={`inline-flex items-center space-x-1 text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+              supabaseStatus === 'connected'
+                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                : supabaseStatus === 'connecting'
+                ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                : 'bg-rose-500/20 text-rose-600 dark:text-rose-400 border-rose-500/30'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                supabaseStatus === 'connected'
+                  ? 'bg-emerald-500 animate-pulse'
+                  : supabaseStatus === 'connecting'
+                  ? 'bg-amber-500 animate-ping'
+                  : 'bg-rose-500'
+              }`}
+            />
+            <span>{supabaseStatus === 'connected' ? 'Realtime DB' : supabaseStatus === 'connecting' ? 'Connecting' : 'Offline'}</span>
           </span>
         </div>
         <p className="text-[11px] font-semibold opacity-90">Photo & Framing House</p>
         <p className="text-[10px] font-bold opacity-80">
           📍 Sudhhodhan-1, Pargatinagar
+        </p>
+        <p className="text-[9px] font-mono opacity-70 truncate pt-0.5">
+          Cloud ID: {SUPABASE_PROJECT_ID}
         </p>
       </div>
     </div>
