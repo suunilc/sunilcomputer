@@ -13,10 +13,13 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
+    detectSessionInUrl: true,
+    flowType: 'pkce',
   },
   realtime: {
     params: {
-      eventsPerSecond: 10,
+      eventsPerSecond: 20,
     },
   },
 });
+
